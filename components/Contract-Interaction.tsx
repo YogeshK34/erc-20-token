@@ -12,32 +12,44 @@ import { Input } from "./ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card"
 import { Separator } from "./ui/separator"
 import { Badge } from "./ui/badge"
-import { projectInvalidateFileSystemCache } from "next/dist/build/swc/generated-native"
-import { ReceiptIcon } from "lucide-react"
-
-// Note: this styling pass assumes the standard shadcn `card`, `separator`,
-// and `badge` primitives are already generated in ./ui. If they aren't yet,
-// add them with: npx shadcn@latest add card separator badge
 
 // I have to check if somehow I can get both the mappings as well 
 
+const NETWORK_NAMES: Record<string, string> = {
+    '0x1': 'Mainnet',
+    '0xaa36a7': 'Sepolia',
+    '0x89': 'Polygon',
+    '0x13882': 'Amoy',
+    '0xa': 'Optimism',
+    '0xa4b1': 'Arbitrum',
+    '0x2105': 'Base',
+};
+
+const getNetworkName = (id: string) => NETWORK_NAMES[id.toLowerCase()] ?? `Chain ${parseInt(id, 16)}`;
+
 export const ContractInteraction = () => {
     const [fetchedName, setFetchedName] = useState<string | null>(null);
-    const [newName, setNewName] = useState<string>("");
-    const [newSymbol, setNewSymbol] = useState<string>("");
     const [fetchedSymbol, setFetchedSymbol] = useState<string | null>(null);
     const [decimals, setDecimals] = useState<bigint | null>(null);
+    const [totalSupply, setTotalSupply] = useState<bigint | null>(null);
+
+    const [newName, setNewName] = useState<string>("");
+    const [newSymbol, setNewSymbol] = useState<string>("");
+    const [initialSupply, setInitialSupply] = useState<string>("");
+
     const [spender, setSpender] = useState<string>('');
+    const [approveLoading, setApproveLoading] = useState<boolean>(false);
+    const [approveValue, setApproveValue] = useState<string>('');
+
     const [transfervalue, setTransferValue] = useState<string>("");
     const [transferAddress, setTransferAddress] = useState<string>('');
+
     const [transferFromValue, setTransferFromValue] = useState<string>('');
     const [transferFromAddress, setTransferFromAddress] = useState<string>('');
     const [fromAddress, setFromAddress] = useState<string>('');
-    const [totalSupply, setTotalSupply] = useState<bigint | null>(null);
-    const [initialSupply, setInitialSupply] = useState<string>("");
+
     const [contractAddress, setContractAddress] = useState<string>('0x109916Bcc350C331c48Bef12D6ADA1a640758E64')
     const [balanceOf, setBalanceOf] = useState<Record<string, string>>({});
-    const [allowance, setAllowance] = useState<object>({});
     const [account, setAccount] = useState<string>('');
     const [chainId, setChainId] = useState<string>('');
     const [loading, setLoading] = useState<boolean>(false);
@@ -45,9 +57,12 @@ export const ContractInteraction = () => {
     const [creatingContract, setCreatingContract] = useState<boolean>(false);
     const [fetchingBalance, setFetchingBalance] = useState<boolean>(false);
     const [walletAddress, setWalletAddress] = useState<string>('');
-    const [transferFrom, setTransferFrom] = useState<boolean>(false);
-    const [approveLoading, setApproveLoading] = useState<boolean>(false);
-    const [approveValue, setApproveValue] = useState<string>('');
+    const [transferFromLoading, setTransferFromLoading] = useState<boolean>(false);
+    const [transferLoading, setTransferLoading] = useState<boolean>(false);
+
+    const [allowance, setAllowance] = useState<Record<string, string>>({});
+    const [allowanceAddress, setAllowanceAddress] = useState<string>('');
+    const [fetchingAllowance, setFetchingAllowance] = useState<boolean>(false);
 
     // 0x18bd3E85CfE9ECCD57af84Ce8CB530626970617d
     // 0x109916Bcc350C331c48Bef12D6ADA1a640758E64
@@ -62,6 +77,8 @@ export const ContractInteraction = () => {
 
                 if (accounts.length > 0) {
                     setAccount(accounts[0]);
+                    const id = await window.ethereum?.request({ method: 'eth_chainId' }) as string;
+                    setChainId(id);
                 }
             } catch (error) {
                 console.error(error);
@@ -100,10 +117,10 @@ export const ContractInteraction = () => {
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }) as string[];
             setAccount(accounts[0]);
 
-            const chainIdHex = await window.ethereum.request({ method: 'eth_chainId' }) as string;
-            setChainId(chainIdHex);
+            const id = await window.ethereum.request({ method: 'eth_chainId' }) as string;
+            setChainId(id);
 
-            toast.success(`Connected: ${accounts[0].slice(0, 6)}...${accounts[0].slice(-4)}`);
+            toast.success(`Connected: ${accounts[0].slice(0, 6)}...${accounts[0].slice(-4)}`, { position: 'top-center' });
         } catch (error) {
             console.error(error);
             toast.error(`Connection failed. ${error}`);
@@ -198,7 +215,7 @@ export const ContractInteraction = () => {
         try {
             if (!window.ethereum) return 'Metamask not installed!';
             if (!transfervalue || !transferAddress) return toast.error('Enter a recipient address & amount!');
-            setLoading(true);
+            setTransferLoading(true);
 
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signer = await provider.getSigner();
@@ -235,14 +252,14 @@ export const ContractInteraction = () => {
             console.error(error);
             return toast.error(`Error. ${error}`);
         } finally {
-            setLoading(false);
+            setTransferLoading(false);
         }
     }
 
     const transferFromFunction = async () => {
         try {
             if (!window.ethereum) return 'Metamask not installed!'
-            setTransferFrom(true);
+            setTransferFromLoading(true);
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signer = await provider.getSigner();
 
@@ -270,7 +287,7 @@ export const ContractInteraction = () => {
 
             if (transferLogs) {
                 const { from, to, value: transferredValue } = await transferLogs.args;
-                toast.success(`Sent ${ethers.formatUnits(transferredValue, decimals ?? 18)} tokens from ${from} to ${to}`);
+                toast.success(`Sent ${ethers.formatUnits(transferredValue, decimals ?? 18)} tokens from ${from} to ${to}`, { position: 'top-center' });
                 await fetchBalance(from);
                 await fetchBalance(to);
             };
@@ -279,7 +296,7 @@ export const ContractInteraction = () => {
             console.error(error);
             return toast.error(`Error. ${error}`)
         } finally {
-            setTransferFrom(false)
+            setTransferFromLoading(false)
         }
     }
 
@@ -314,8 +331,13 @@ export const ContractInteraction = () => {
 
             if (approvalLog) {
                 const { owner, spender: approvedSpender, value: approvedValue } = approvalLog.args;
-                toast.success(`Address ${approvedSpender} approved to transfer ${ethers.formatUnits(approvedValue, decimals ?? 18)} on behalf of ${owner}!`,
+                const formatted = ethers.formatUnits(approvedValue, decimals ?? 18);
+                toast.success(`Address ${approvedSpender} approved to transfer ${formatted} on behalf of ${owner}!`,
                     { position: 'top-center' });
+                setAllowance((prev) => ({
+                    ...prev,
+                    [approvedSpender]: formatted,
+                }));
             };
         } catch (error) {
 
@@ -345,6 +367,30 @@ export const ContractInteraction = () => {
             toast.error(`Error fetching balance. ${error}`);
         } finally {
             setFetchingBalance(false);
+        }
+    };
+
+    const fetchAllowance = async (spenderToCheck: string) => {
+        try {
+            if (!window.ethereum) return;
+            if (!account) return toast.error('Connect your wallet first');
+            if (!ethers.isAddress(spenderToCheck)) return toast.error('Enter a valid spender address');
+
+            setFetchingAllowance(true);
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const contract = new Contract(contractAddress, ABI, provider);
+            // allowance(owner, spender) — owner is always the connected account
+            const rawAllowance = await contract.allowance(account, spenderToCheck);
+
+            setAllowance((prev) => ({
+                ...prev,
+                [spenderToCheck]: ethers.formatUnits(rawAllowance, decimals ?? 18),
+            }));
+        } catch (error) {
+            console.error(error);
+            toast.error(`Error fetching allowance. ${error}`);
+        } finally {
+            setFetchingAllowance(false);
         }
     };
 
@@ -385,18 +431,25 @@ export const ContractInteraction = () => {
                             className="gap-1.5 border-zinc-800 bg-zinc-900/60 font-mono text-xs text-zinc-400"
                         >
                             <span
-                                className={`h-1.5 w-1.5 rounded-full ${loading || readingContract || creatingContract || fetchingBalance
+                                className={`h-1.5 w-1.5 rounded-full ${loading || readingContract || creatingContract || fetchingBalance || approveLoading || transferLoading || transferFromLoading
                                     ? "animate-pulse bg-amber-400"
                                     : "bg-emerald-400"
                                     }`}
                             />
-                            {loading || readingContract || creatingContract || fetchingBalance ? "processing" : "idle"}
+                            {loading || readingContract || creatingContract || fetchingBalance || approveLoading || transferLoading || transferFromLoading ? "processing" : "idle"}
                         </Badge>
 
                         {account ? (
-                            <Badge variant="outline" className="border-zinc-800 bg-zinc-900/60 font-mono text-xs text-cyan-300">
-                                {account.slice(0, 6)}...{account.slice(-4)}
-                            </Badge>
+                            <>
+                                {chainId && (
+                                    <Badge variant="outline" className="border-zinc-800 bg-zinc-900/60 font-mono text-xs text-zinc-400">
+                                        {getNetworkName(chainId)}
+                                    </Badge>
+                                )}
+                                <Badge variant="outline" className="border-zinc-800 bg-zinc-900/60 font-mono text-xs text-cyan-300">
+                                    {account.slice(0, 6)}...{account.slice(-4)}
+                                </Badge>
+                            </>
                         ) : (
                             <Button
                                 onClick={connectWallet}
@@ -617,7 +670,7 @@ export const ContractInteraction = () => {
 
                         <Button
                             onClick={approve}
-                            disabled={loading || !account}
+                            disabled={approveLoading || !account}
                             className="w-full bg-cyan-400 text-zinc-950 hover:bg-cyan-300"
                         >
                             {approveLoading ? (
@@ -671,10 +724,10 @@ export const ContractInteraction = () => {
 
                         <Button
                             onClick={transfer}
-                            disabled={loading || !account}
+                            disabled={transferLoading || !account}
                             className="w-full bg-cyan-400 text-zinc-950 hover:bg-cyan-300"
                         >
-                            {loading ? (
+                            {transferLoading ? (
                                 <span className="flex items-center gap-2">
                                     <Spinner className="h-4 w-4" />
                                     Sending
@@ -686,7 +739,7 @@ export const ContractInteraction = () => {
                     </CardContent>
                 </Card>
 
-                {/* TransferFrom card */}
+                {/* Transfer From card */}
                 <Card className="border-zinc-800 bg-zinc-900/40">
                     <CardHeader>
                         <CardTitle className="text-base text-zinc-100">Transfer From</CardTitle>
@@ -739,10 +792,10 @@ export const ContractInteraction = () => {
 
                         <Button
                             onClick={transferFromFunction}
-                            disabled={loading || !account}
+                            disabled={transferFromLoading || !account}
                             className="w-full bg-cyan-400 text-zinc-950 hover:bg-cyan-300"
                         >
-                            {transferFrom ? (
+                            {transferFromLoading ? (
                                 <span className="flex items-center gap-2">
                                     <Spinner className="h-4 w-4" />
                                     Sending
@@ -802,6 +855,66 @@ export const ContractInteraction = () => {
                                             {address.slice(0, 6)}...{address.slice(-4)}
                                         </dt>
                                         <dd className="font-mono text-sm text-cyan-300">{balance}</dd>
+                                    </div>
+                                ))}
+                            </dl>
+                        )}
+                    </CardContent>
+                </Card>
+
+                {/* Allowance card */}
+                <Card className="border-zinc-800 bg-zinc-900/40">
+                    <CardHeader>
+                        <CardTitle className="text-base text-zinc-100">Check allowance</CardTitle>
+                        <CardDescription className="text-zinc-500">
+                            See how much a spender is approved to transfer on behalf of your connected wallet.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="allowanceAddress" className="text-xs text-zinc-400">
+                                Spender address
+                            </Label>
+                            <Input
+                                id="allowanceAddress"
+                                type="text"
+                                value={allowanceAddress}
+                                onChange={(e) => setAllowanceAddress(e.target.value)}
+                                placeholder="0x..."
+                                className="border-zinc-800 bg-zinc-950 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-cyan-400/40"
+                            />
+                        </div>
+
+                        <Button
+                            onClick={() => fetchAllowance(allowanceAddress)}
+                            disabled={fetchingAllowance || !account}
+                            variant="outline"
+                            className="w-full border-zinc-700 bg-transparent text-zinc-100 hover:bg-zinc-800 hover:text-zinc-50"
+                        >
+                            {fetchingAllowance ? (
+                                <span className="flex items-center gap-2">
+                                    <Spinner className="h-4 w-4" />
+                                    Fetching
+                                </span>
+                            ) : (
+                                "Check allowance"
+                            )}
+                        </Button>
+
+                        {Object.entries(allowance).length > 0 && (
+                            <dl className="mt-1 divide-y divide-zinc-800 rounded-lg border border-zinc-800 bg-zinc-950/60 px-4">
+                                <div className="flex items-center justify-between py-2">
+                                    <dt className="text-xs text-zinc-600">Owner (you)</dt>
+                                    <dd className="truncate font-mono text-xs text-zinc-500" title={account}>
+                                        {account.slice(0, 6)}...{account.slice(-4)}
+                                    </dd>
+                                </div>
+                                {Object.entries(allowance).map(([spenderAddr, amount]) => (
+                                    <div key={spenderAddr} className="flex items-center justify-between py-3">
+                                        <dt className="truncate font-mono text-xs text-zinc-500" title={spenderAddr}>
+                                            {spenderAddr.slice(0, 6)}...{spenderAddr.slice(-4)}
+                                        </dt>
+                                        <dd className="font-mono text-sm text-cyan-300">{amount}</dd>
                                     </div>
                                 ))}
                             </dl>
