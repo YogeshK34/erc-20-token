@@ -12,6 +12,8 @@ import { Input } from "./ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card"
 import { Separator } from "./ui/separator"
 import { Badge } from "./ui/badge"
+import { projectInvalidateFileSystemCache } from "next/dist/build/swc/generated-native"
+import { ReceiptIcon } from "lucide-react"
 
 // Note: this styling pass assumes the standard shadcn `card`, `separator`,
 // and `badge` primitives are already generated in ./ui. If they aren't yet,
@@ -25,12 +27,15 @@ export const ContractInteraction = () => {
     const [newSymbol, setNewSymbol] = useState<string>("");
     const [fetchedSymbol, setFetchedSymbol] = useState<string | null>(null);
     const [decimals, setDecimals] = useState<bigint | null>(null);
-    const [spender, setSpender] = useState<string | null>(null);
-    const [value, setValue] = useState<string>("");
-    const [toAddress, setToAddress] = useState<string>('');
+    const [spender, setSpender] = useState<string>('');
+    const [transfervalue, setTransferValue] = useState<string>("");
+    const [transferAddress, setTransferAddress] = useState<string>('');
+    const [transferFromValue, setTransferFromValue] = useState<string>('');
+    const [transferFromAddress, setTransferFromAddress] = useState<string>('');
+    const [fromAddress, setFromAddress] = useState<string>('');
     const [totalSupply, setTotalSupply] = useState<bigint | null>(null);
     const [initialSupply, setInitialSupply] = useState<string>("");
-    const [contractAddress, setContractAddress] = useState<string>('0x6B1daEb31D7E1Eb02f9984de21B9515735188bF2')
+    const [contractAddress, setContractAddress] = useState<string>('0x109916Bcc350C331c48Bef12D6ADA1a640758E64')
     const [balanceOf, setBalanceOf] = useState<Record<string, string>>({});
     const [allowance, setAllowance] = useState<object>({});
     const [account, setAccount] = useState<string>('');
@@ -40,6 +45,9 @@ export const ContractInteraction = () => {
     const [creatingContract, setCreatingContract] = useState<boolean>(false);
     const [fetchingBalance, setFetchingBalance] = useState<boolean>(false);
     const [walletAddress, setWalletAddress] = useState<string>('');
+    const [transferFrom, setTransferFrom] = useState<boolean>(false);
+    const [approveLoading, setApproveLoading] = useState<boolean>(false);
+    const [approveValue, setApproveValue] = useState<string>('');
 
     // 0x18bd3E85CfE9ECCD57af84Ce8CB530626970617d
     // 0x109916Bcc350C331c48Bef12D6ADA1a640758E64
@@ -189,7 +197,7 @@ export const ContractInteraction = () => {
     const transfer = async () => {
         try {
             if (!window.ethereum) return 'Metamask not installed!';
-            if (!value || !toAddress) return toast.error('Enter a recipient address & amount!');
+            if (!transfervalue || !transferAddress) return toast.error('Enter a recipient address & amount!');
             setLoading(true);
 
             const provider = new ethers.BrowserProvider(window.ethereum);
@@ -201,9 +209,9 @@ export const ContractInteraction = () => {
                 signer,
             );
 
-            const rawValue = ethers.parseUnits(value, decimals ?? 18);
+            const rawValue = ethers.parseUnits(transfervalue, decimals ?? 18);
 
-            const tx = await contract.transfer(toAddress, rawValue);
+            const tx = await contract.transfer(transferAddress, rawValue);
             const receipt = await tx.wait();
 
             const transferLogs = receipt.logs.map((log: any) => {
@@ -228,6 +236,94 @@ export const ContractInteraction = () => {
             return toast.error(`Error. ${error}`);
         } finally {
             setLoading(false);
+        }
+    }
+
+    const transferFromFunction = async () => {
+        try {
+            if (!window.ethereum) return 'Metamask not installed!'
+            setTransferFrom(true);
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signer = await provider.getSigner();
+
+            const contract = new Contract(
+                contractAddress,
+                ABI,
+                signer
+            );
+
+            // parse the value first 
+            const rawValue = ethers.parseUnits(transferFromValue, decimals ?? 18);
+
+            const tx = await contract.transferFrom(fromAddress, transferFromAddress, rawValue);
+            const receipt = await tx.wait();
+
+            const transferLogs = receipt.logs.map((log: any) => {
+                try {
+                    return contract.interface.parseLog(log);
+                } catch (error) {
+                    console.error(error);
+                    return null;
+                }
+            })
+                .find((parsed: any) => parsed?.name == 'Transfer');
+
+            if (transferLogs) {
+                const { from, to, value: transferredValue } = await transferLogs.args;
+                toast.success(`Sent ${ethers.formatUnits(transferredValue, decimals ?? 18)} tokens from ${from} to ${to}`);
+                await fetchBalance(from);
+                await fetchBalance(to);
+            };
+
+        } catch (error) {
+            console.error(error);
+            return toast.error(`Error. ${error}`)
+        } finally {
+            setTransferFrom(false)
+        }
+    }
+
+    const approve = async () => {
+        try {
+            if (!window.ethereum) return 'Metamask not installed!'
+            setApproveLoading(true);
+
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signer = await provider.getSigner();
+
+            const contract = new Contract(
+                contractAddress,
+                ABI,
+                signer
+            );
+
+            const rawValue = ethers.parseUnits(approveValue, decimals ?? 18);
+            const tx = await contract.approve(spender, rawValue);
+            const receipt = await tx.wait();
+
+            const approvalLog = receipt.logs
+                .map((log: any) => {
+                    try {
+                        return contract.interface.parseLog(log);
+                    } catch (error) {
+                        console.error(error);
+                        return null;
+                    }
+                })
+                .find((parsed: any) => parsed?.name === 'Approval');
+
+            if (approvalLog) {
+                const { owner, spender: approvedSpender, value: approvedValue } = approvalLog.args;
+                toast.success(`Address ${approvedSpender} approved to transfer ${ethers.formatUnits(approvedValue, decimals ?? 18)} on behalf of ${owner}!`,
+                    { position: 'top-center' });
+            };
+        } catch (error) {
+
+            console.error(error);
+            return toast.error(`Error. ${error}`);
+
+        } finally {
+            setApproveLoading(false);
         }
     }
 
@@ -482,6 +578,60 @@ export const ContractInteraction = () => {
                     <Separator className="flex-1 bg-zinc-800" />
                 </div>
 
+                {/* Approve card */}
+                <Card className="border-zinc-800 bg-zinc-900/40">
+                    <CardHeader>
+                        <CardTitle className="text-base text-zinc-100">Approve</CardTitle>
+                        <CardDescription className="text-zinc-500">
+                            Approve an address to transfer tokens from your behalf.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="spenderAddress" className="text-xs text-zinc-400">
+                                Spender address
+                            </Label>
+                            <Input
+                                id="spenderAddress"
+                                type="text"
+                                value={spender}
+                                onChange={(e) => setSpender(e.target.value)}
+                                placeholder="0x..."
+                                className="border-zinc-800 bg-zinc-950 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-cyan-400/40"
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="approveValue" className="text-xs text-zinc-400">
+                                Amount
+                            </Label>
+                            <Input
+                                id="approveValue"
+                                type="number"
+                                value={approveValue}
+                                onChange={(e) => setApproveValue(e.target.value)}
+                                placeholder="10"
+                                className="border-zinc-800 bg-zinc-950 font-mono text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-cyan-400/40"
+                            />
+                        </div>
+
+                        <Button
+                            onClick={approve}
+                            disabled={loading || !account}
+                            className="w-full bg-cyan-400 text-zinc-950 hover:bg-cyan-300"
+                        >
+                            {approveLoading ? (
+                                <span className="flex items-center gap-2">
+                                    <Spinner className="h-4 w-4" />
+                                    Approving
+                                </span>
+                            ) : (
+                                "Approve"
+                            )}
+                        </Button>
+                    </CardContent>
+                </Card>
+
                 {/* Transfer card */}
                 <Card className="border-zinc-800 bg-zinc-900/40">
                     <CardHeader>
@@ -498,8 +648,8 @@ export const ContractInteraction = () => {
                             <Input
                                 id="toAddress"
                                 type="text"
-                                value={toAddress}
-                                onChange={(e) => setToAddress(e.target.value)}
+                                value={transferAddress}
+                                onChange={(e) => setTransferAddress(e.target.value)}
                                 placeholder="0x..."
                                 className="border-zinc-800 bg-zinc-950 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-cyan-400/40"
                             />
@@ -512,8 +662,8 @@ export const ContractInteraction = () => {
                             <Input
                                 id="value"
                                 type="number"
-                                value={value}
-                                onChange={(e) => setValue(e.target.value)}
+                                value={transfervalue}
+                                onChange={(e) => setTransferValue(e.target.value)}
                                 placeholder="10"
                                 className="border-zinc-800 bg-zinc-950 font-mono text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-cyan-400/40"
                             />
@@ -535,6 +685,75 @@ export const ContractInteraction = () => {
                         </Button>
                     </CardContent>
                 </Card>
+
+                {/* TransferFrom card */}
+                <Card className="border-zinc-800 bg-zinc-900/40">
+                    <CardHeader>
+                        <CardTitle className="text-base text-zinc-100">Transfer From</CardTitle>
+                        <CardDescription className="text-zinc-500">
+                            Send tokens on behalf of owners address to a Recipient
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="toAddress" className="text-xs text-zinc-400">
+                                Sender's address
+                            </Label>
+                            <Input
+                                id="fromAddress"
+                                type="text"
+                                value={fromAddress}
+                                onChange={(e) => setFromAddress(e.target.value)}
+                                placeholder="0x..."
+                                className="border-zinc-800 bg-zinc-950 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-cyan-400/40"
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="toAddress" className="text-xs text-zinc-400">
+                                Recipient address
+                            </Label>
+                            <Input
+                                id="toAddress"
+                                type="text"
+                                value={transferFromAddress}
+                                onChange={(e) => setTransferFromAddress(e.target.value)}
+                                placeholder="0x..."
+                                className="border-zinc-800 bg-zinc-950 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-cyan-400/40"
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="value" className="text-xs text-zinc-400">
+                                Amount
+                            </Label>
+                            <Input
+                                id="value"
+                                type="number"
+                                value={transferFromValue}
+                                onChange={(e) => setTransferFromValue(e.target.value)}
+                                placeholder="10"
+                                className="border-zinc-800 bg-zinc-950 font-mono text-zinc-100 placeholder:text-zinc-600 focus-visible:ring-cyan-400/40"
+                            />
+                        </div>
+
+                        <Button
+                            onClick={transferFromFunction}
+                            disabled={loading || !account}
+                            className="w-full bg-cyan-400 text-zinc-950 hover:bg-cyan-300"
+                        >
+                            {transferFrom ? (
+                                <span className="flex items-center gap-2">
+                                    <Spinner className="h-4 w-4" />
+                                    Sending
+                                </span>
+                            ) : (
+                                "Send tokens"
+                            )}
+                        </Button>
+                    </CardContent>
+                </Card>
+
 
                 {/* Balance card */}
                 <Card className="border-zinc-800 bg-zinc-900/40">
