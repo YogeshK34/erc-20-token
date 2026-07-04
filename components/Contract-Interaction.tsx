@@ -5,6 +5,7 @@ import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Contract, ethers } from 'ethers'
 import { ABI, BYTECODE } from "@/config"
+import { useSubgraphData } from "@/lib/subgraph"
 import { Label } from "./ui/label"
 import { Button } from "./ui/button"
 import { Spinner } from "./ui/spinner"
@@ -63,6 +64,25 @@ export const ContractInteraction = () => {
     const [allowance, setAllowance] = useState<Record<string, string>>({});
     const [allowanceAddress, setAllowanceAddress] = useState<string>('');
     const [fetchingAllowance, setFetchingAllowance] = useState<boolean>(false);
+
+    // ── Subgraph / Indexer state ──────────────────────────────────────────────
+    const [indexerStatus, setIndexerStatus] = useState<string>('');
+
+    /**
+     * `useSubgraphData` fetches event data from The Graph.
+     * • `data`            — latest indexed events
+     * • `loading`         — true while fetching
+     * • `error`           — non-null when the query fails
+     * • `refetch`         — one-shot manual trigger
+     * • `pollUntilUpdated` — polls until a new record appears (post-tx sync)
+     */
+    const {
+        data: subgraphData,
+        loading: subgraphLoading,
+        error: subgraphError,
+        refetch: refetchSubgraph,
+        pollUntilUpdated,
+    } = useSubgraphData();
 
     // 0x18bd3E85CfE9ECCD57af84Ce8CB530626970617d
     // 0x109916Bcc350C331c48Bef12D6ADA1a640758E64
@@ -228,7 +248,12 @@ export const ContractInteraction = () => {
 
             const rawValue = ethers.parseUnits(transfervalue, decimals ?? 18);
 
+            // ── Step 1: send transaction ──────────────────────────────────────
+            setIndexerStatus("Sending transaction...");
             const tx = await contract.transfer(transferAddress, rawValue);
+
+            // ── Step 2: wait for on-chain confirmation ────────────────────────
+            setIndexerStatus("Mining transaction...");
             const receipt = await tx.wait();
 
             const transferLogs = receipt.logs.map((log: any) => {
@@ -248,11 +273,18 @@ export const ContractInteraction = () => {
                 await fetchBalance(to);
             }
 
+            // ── Step 3: sync the indexer UI ───────────────────────────────────
+            setIndexerStatus("Syncing with indexer...");
+            pollUntilUpdated(30_000, 3_000);
+            setIndexerStatus("Success!");
+
         } catch (error) {
             console.error(error);
+            setIndexerStatus("Failed");
             return toast.error(`Error. ${error}`);
         } finally {
             setTransferLoading(false);
+            setTimeout(() => setIndexerStatus(''), 4_000);
         }
     }
 
@@ -269,10 +301,15 @@ export const ContractInteraction = () => {
                 signer
             );
 
-            // parse the value first 
+            // parse the value first
             const rawValue = ethers.parseUnits(transferFromValue, decimals ?? 18);
 
+            // ── Step 1: send transaction ──────────────────────────────────────
+            setIndexerStatus("Sending transaction...");
             const tx = await contract.transferFrom(fromAddress, transferFromAddress, rawValue);
+
+            // ── Step 2: wait for on-chain confirmation ────────────────────────
+            setIndexerStatus("Mining transaction...");
             const receipt = await tx.wait();
 
             const transferLogs = receipt.logs.map((log: any) => {
@@ -292,11 +329,18 @@ export const ContractInteraction = () => {
                 await fetchBalance(to);
             };
 
+            // ── Step 3: sync the indexer UI ───────────────────────────────────
+            setIndexerStatus("Syncing with indexer...");
+            pollUntilUpdated(30_000, 3_000);
+            setIndexerStatus("Success!");
+
         } catch (error) {
             console.error(error);
+            setIndexerStatus("Failed");
             return toast.error(`Error. ${error}`)
         } finally {
-            setTransferFromLoading(false)
+            setTransferFromLoading(false);
+            setTimeout(() => setIndexerStatus(''), 4_000);
         }
     }
 
@@ -315,7 +359,13 @@ export const ContractInteraction = () => {
             );
 
             const rawValue = ethers.parseUnits(approveValue, decimals ?? 18);
+
+            // ── Step 1: send transaction ──────────────────────────────────────
+            setIndexerStatus("Sending transaction...");
             const tx = await contract.approve(spender, rawValue);
+
+            // ── Step 2: wait for on-chain confirmation ────────────────────────
+            setIndexerStatus("Mining transaction...");
             const receipt = await tx.wait();
 
             const approvalLog = receipt.logs
@@ -339,13 +389,20 @@ export const ContractInteraction = () => {
                     [approvedSpender]: formatted,
                 }));
             };
-        } catch (error) {
 
+            // ── Step 3: sync the indexer UI ───────────────────────────────────
+            setIndexerStatus("Syncing with indexer...");
+            pollUntilUpdated(30_000, 3_000);
+            setIndexerStatus("Success!");
+
+        } catch (error) {
             console.error(error);
+            setIndexerStatus("Failed");
             return toast.error(`Error. ${error}`);
 
         } finally {
             setApproveLoading(false);
+            setTimeout(() => setIndexerStatus(''), 4_000);
         }
     }
 
@@ -919,6 +976,132 @@ export const ContractInteraction = () => {
                                 ))}
                             </dl>
                         )}
+                    </CardContent>
+                </Card>
+
+                {/* ── Indexed Event Feed ────────────────────────────────────── */}
+                <div className="flex items-center gap-3">
+                    <Separator className="flex-1 bg-zinc-800" />
+                    <span className="text-xs font-mono uppercase tracking-widest text-zinc-600">
+                        indexed events
+                    </span>
+                    <Separator className="flex-1 bg-zinc-800" />
+                </div>
+
+                <Card className="border-zinc-800 bg-zinc-900/40">
+                    <CardHeader>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <CardTitle className="text-base text-zinc-100">Event Feed</CardTitle>
+                                <CardDescription className="text-zinc-500">
+                                    Live transfer &amp; approval events indexed by The Graph.
+                                </CardDescription>
+                            </div>
+                            <Button
+                                onClick={refetchSubgraph}
+                                disabled={subgraphLoading}
+                                variant="outline"
+                                size="sm"
+                                className="border-zinc-700 bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                            >
+                                {subgraphLoading ? (
+                                    <span className="flex items-center gap-1.5">
+                                        <Spinner className="h-3 w-3" />
+                                        Syncing
+                                    </span>
+                                ) : (
+                                    "Refresh"
+                                )}
+                            </Button>
+                        </div>
+                    </CardHeader>
+
+                    <CardContent className="flex flex-col gap-4">
+                        {/* Indexer status banner (shown during/after write tx) */}
+                        {indexerStatus && (
+                            <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+                                <span className="font-mono text-xs text-amber-300">{indexerStatus}</span>
+                            </div>
+                        )}
+
+                        {/* Subgraph error */}
+                        {subgraphError && (
+                            <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2">
+                                <p className="font-mono text-xs text-red-400">
+                                    ⚠ {subgraphError}
+                                </p>
+                                <p className="mt-1 text-xs text-zinc-500">
+                                    Set <code className="text-zinc-300">SUBGRAPH_ENDPOINT_URL</code> in{" "}
+                                    <code className="text-zinc-300">lib/subgraph.ts</code> to your Development Query URL.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Transfer events */}
+                        {subgraphData?.transfers && subgraphData.transfers.length > 0 && (
+                            <div className="flex flex-col gap-2">
+                                <p className="text-xs font-mono uppercase tracking-widest text-zinc-600">Transfers</p>
+                                <dl className="divide-y divide-zinc-800 rounded-lg border border-zinc-800 bg-zinc-950/60 px-4">
+                                    {subgraphData.transfers.map((evt) => (
+                                        <div key={evt.id} className="flex items-center justify-between py-3">
+                                            <dt className="flex flex-col gap-0.5">
+                                                <span className="font-mono text-xs text-zinc-500">
+                                                    {evt.from.slice(0, 6)}…{evt.from.slice(-4)}
+                                                    {" → "}
+                                                    {evt.to.slice(0, 6)}…{evt.to.slice(-4)}
+                                                </span>
+                                                <span className="font-mono text-[10px] text-zinc-700">
+                                                    {new Date(Number(evt.blockTimestamp) * 1000).toLocaleTimeString()}
+                                                </span>
+                                            </dt>
+                                            <dd className="font-mono text-sm text-cyan-300">
+                                                {decimals !== null
+                                                    ? ethers.formatUnits(evt.value, decimals)
+                                                    : evt.value}
+                                            </dd>
+                                        </div>
+                                    ))}
+                                </dl>
+                            </div>
+                        )}
+
+                        {/* Approval events */}
+                        {subgraphData?.approvals && subgraphData.approvals.length > 0 && (
+                            <div className="flex flex-col gap-2">
+                                <p className="text-xs font-mono uppercase tracking-widest text-zinc-600">Approvals</p>
+                                <dl className="divide-y divide-zinc-800 rounded-lg border border-zinc-800 bg-zinc-950/60 px-4">
+                                    {subgraphData.approvals.map((evt) => (
+                                        <div key={evt.id} className="flex items-center justify-between py-3">
+                                            <dt className="flex flex-col gap-0.5">
+                                                <span className="font-mono text-xs text-zinc-500">
+                                                    {evt.owner.slice(0, 6)}…{evt.owner.slice(-4)}
+                                                    {" approved "}
+                                                    {evt.spender.slice(0, 6)}…{evt.spender.slice(-4)}
+                                                </span>
+                                                <span className="font-mono text-[10px] text-zinc-700">
+                                                    {new Date(Number(evt.blockTimestamp) * 1000).toLocaleTimeString()}
+                                                </span>
+                                            </dt>
+                                            <dd className="font-mono text-sm text-emerald-300">
+                                                {decimals !== null
+                                                    ? ethers.formatUnits(evt.value, decimals)
+                                                    : evt.value}
+                                            </dd>
+                                        </div>
+                                    ))}
+                                </dl>
+                            </div>
+                        )}
+
+                        {/* Empty state — only shown when both arrays are empty */}
+                        {!subgraphLoading && !subgraphError &&
+                            (!subgraphData?.transfers?.length && !subgraphData?.approvals?.length) && (
+                                <p className="text-center font-mono text-xs text-zinc-600">
+                                    No indexed events yet. Configure your subgraph endpoint in{" "}
+                                    <code className="text-zinc-400">lib/subgraph.ts</code>.
+                                </p>
+                            )}
                     </CardContent>
                 </Card>
             </div>
