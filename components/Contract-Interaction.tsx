@@ -1,7 +1,7 @@
 "use client"
 /*eslint-disable*/
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Contract, ethers } from 'ethers'
 import { ABI, BYTECODE } from "@/config"
@@ -87,6 +87,38 @@ export const ContractInteraction = () => {
     // 0x18bd3E85CfE9ECCD57af84Ce8CB530626970617d
     // 0x109916Bcc350C331c48Bef12D6ADA1a640758E64
 
+    // ── Ethereum singletons ───────────────────────────────────────────────────
+    // `provider` is memoized for the lifetime of the component — window.ethereum
+    // is injected once by MetaMask and never changes, so there is no reason to
+    // construct a new BrowserProvider on every function call.
+    //
+    // `readContract` is memoized on `contractAddress`: a new Contract instance is
+    // only built when the user points to a different address, not on every read.
+    //
+    // Write functions that need a Signer still call `provider.getSigner()` — that
+    // is intentionally NOT memoized because MetaMask may return a different signer
+    // after an account switch, so we always want a fresh one for writes.
+    const provider = useMemo(() => {
+        if (typeof window === 'undefined' || !window.ethereum) return null;
+        return new ethers.BrowserProvider(window.ethereum);
+    }, []);
+
+    const contractInstance = useMemo(() => {
+        if (!provider || !ethers.isAddress(contractAddress)) return null;
+        return new Contract(contractAddress, ABI, provider);
+    }, [provider, contractAddress]);
+
+    // Convenience: throws if MetaMask isn't available so callers don't have to
+    // guard themselves — errors bubble up to each function's existing catch block.
+    const getProvider = () => {
+        if (!provider) throw new Error('MetaMask not installed!');
+        return provider;
+    };
+
+    const getSigner = async () => {
+        return getProvider().getSigner();
+    };
+
     useEffect(() => {
         const checkExistingWallet = async () => {
             try {
@@ -160,10 +192,9 @@ export const ContractInteraction = () => {
         }
 
         try {
-            if (!window.ethereum) return 'Metamask not installed!';
             setReadingContract(true);
 
-            const provider = new ethers.BrowserProvider(window.ethereum);
+            const provider = getProvider();
             const contract = new Contract(
                 target,
                 ABI,
@@ -193,15 +224,13 @@ export const ContractInteraction = () => {
 
     const createContract = async () => {
         try {
-            if (!window.ethereum) return 'Metamask not installed!';
             if (!newName || !newSymbol) {
                 toast.error("Enter a name and symbol first");
                 return;
             }
             setCreatingContract(true);
 
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const signer = await provider.getSigner();
+            const signer = await getSigner();
 
             const factory = new ethers.ContractFactory(
                 ABI,
@@ -233,12 +262,10 @@ export const ContractInteraction = () => {
 
     const transfer = async () => {
         try {
-            if (!window.ethereum) return 'Metamask not installed!';
             if (!transfervalue || !transferAddress) return toast.error('Enter a recipient address & amount!');
             setTransferLoading(true);
 
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const signer = await provider.getSigner();
+            const signer = await getSigner();
 
             const contract = new Contract(
                 contractAddress,
@@ -256,7 +283,7 @@ export const ContractInteraction = () => {
             setIndexerStatus("Mining transaction...");
             const receipt = await tx.wait();
 
-            const transferLogs = receipt.logs.map((log: any) => {
+            const parsedLogs = receipt.logs.map((log: any) => {
                 try {
                     return contract.interface.parseLog(log);
                 } catch (error) {
@@ -264,7 +291,8 @@ export const ContractInteraction = () => {
                     return null;
                 }
             })
-                .find((parsed: any) => parsed?.name === 'Transfer');
+
+            const transferLogs = parsedLogs.find((parsed: any) => parsed?.name === 'Transfer')
 
             if (transferLogs) {
                 const { from, to, value: transferredValue } = transferLogs.args;
@@ -290,10 +318,8 @@ export const ContractInteraction = () => {
 
     const transferFromFunction = async () => {
         try {
-            if (!window.ethereum) return 'Metamask not installed!'
             setTransferFromLoading(true);
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const signer = await provider.getSigner();
+            const signer = await getSigner();
 
             const contract = new Contract(
                 contractAddress,
@@ -312,7 +338,7 @@ export const ContractInteraction = () => {
             setIndexerStatus("Mining transaction...");
             const receipt = await tx.wait();
 
-            const transferLogs = receipt.logs.map((log: any) => {
+            const parsedLogs = receipt.logs.map((log: any) => {
                 try {
                     return contract.interface.parseLog(log);
                 } catch (error) {
@@ -320,7 +346,8 @@ export const ContractInteraction = () => {
                     return null;
                 }
             })
-                .find((parsed: any) => parsed?.name == 'Transfer');
+
+            const transferLogs = parsedLogs.find((parsed: any) => parsed?.name === 'Transfer');
 
             if (transferLogs) {
                 const { from, to, value: transferredValue } = await transferLogs.args;
@@ -346,11 +373,9 @@ export const ContractInteraction = () => {
 
     const approve = async () => {
         try {
-            if (!window.ethereum) return 'Metamask not installed!'
             setApproveLoading(true);
 
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const signer = await provider.getSigner();
+            const signer = await getSigner();
 
             const contract = new Contract(
                 contractAddress,
@@ -368,7 +393,7 @@ export const ContractInteraction = () => {
             setIndexerStatus("Mining transaction...");
             const receipt = await tx.wait();
 
-            const approvalLog = receipt.logs
+            const parsedLogs = receipt.logs
                 .map((log: any) => {
                     try {
                         return contract.interface.parseLog(log);
@@ -377,7 +402,8 @@ export const ContractInteraction = () => {
                         return null;
                     }
                 })
-                .find((parsed: any) => parsed?.name === 'Approval');
+
+            const approvalLog = parsedLogs.find((parsed: any) => parsed?.name === 'Approval');
 
             if (approvalLog) {
                 const { owner, spender: approvedSpender, value: approvedValue } = approvalLog.args;
@@ -408,11 +434,8 @@ export const ContractInteraction = () => {
 
     const fetchBalance = async (addressToCheck: string) => {
         try {
-            if (!window.ethereum) return;
-
             setFetchingBalance(true);
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const contract = new Contract(contractAddress, ABI, provider);
+            const contract = contractInstance ?? new Contract(contractAddress, ABI, getProvider());
             const rawBalance = await contract.balanceOf(addressToCheck);
 
             setBalanceOf((prev) => ({
@@ -429,13 +452,11 @@ export const ContractInteraction = () => {
 
     const fetchAllowance = async (spenderToCheck: string) => {
         try {
-            if (!window.ethereum) return;
             if (!account) return toast.error('Connect your wallet first');
             if (!ethers.isAddress(spenderToCheck)) return toast.error('Enter a valid spender address');
 
             setFetchingAllowance(true);
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const contract = new Contract(contractAddress, ABI, provider);
+            const contract = contractInstance ?? new Contract(contractAddress, ABI, getProvider());
             // allowance(owner, spender) — owner is always the connected account
             const rawAllowance = await contract.allowance(account, spenderToCheck);
 
@@ -1107,28 +1128,4 @@ export const ContractInteraction = () => {
             </div>
         </div>
     )
-}
-
-// Extend window type to include ethereum
-declare global {
-    interface Window {
-        ethereum?: {
-            isMetaMask?: boolean;
-
-            request: (args: RequestArguments) => Promise<unknown>;
-
-            on(event: 'accountsChanged', callback: (accounts: string[]) => void): void;
-            on(event: 'chainChanged', callback: (chainId: string) => void): void;
-            on(event: 'disconnect', callback: (error: { code: number; message: string }) => void): void;
-
-            removeListener(event: 'accountsChanged', callback: (accounts: string[]) => void): void;
-            removeListener(event: 'chainChanged', callback: (chainId: string) => void): void;
-            removeListener(event: 'disconnect', callback: (error: { code: number; message: string }) => void): void;
-        };
-    }
-}
-
-interface RequestArguments {
-    method: 'eth_accounts' | 'eth_requestAccounts' | 'eth_chainId' | 'eth_getBalance';
-    params?: unknown[];
 }
